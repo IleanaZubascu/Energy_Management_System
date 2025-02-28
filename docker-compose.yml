@@ -1,0 +1,168 @@
+version: '3.8'
+
+services:
+  # Traefik as reverse proxy and load balancer
+  traefik:
+    image: traefik:v3.2
+    container_name: traefik
+    ports:
+      - "80:80"      # HTTP traffic
+      - "8080:8080"  # Traefik dashboard
+    networks:
+      - app-network
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock   
+      - traefik_logs:/var/log/traefik
+    command:
+      - --api.insecure=true                          
+      - --providers.docker                            
+      - --accesslog=true                             
+      - --accesslog.filepath=/var/log/traefik/access.log
+      - --log.level=DEBUG                             
+      - --entrypoints.web.address=:80                
+    labels:
+      - "traefik.enable=true"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    networks:
+      - app-network
+    depends_on:
+      - user
+      - device
+      - monitoring-communication
+      - chat
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.frontend.rule=Host(`frontend.localhost`)"
+      - "traefik.http.services.frontend.loadbalancer.server.port=80"
+ 
+  user:
+    build:
+      context: ./user
+      dockerfile: Dockerfile
+    ports:
+      - "8082"
+    networks:
+      - app-network
+    environment:
+      - SPRING_PROFILES_ACTIVE=prod
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.user.rule=Host(`user.localhost`) || PathPrefix(`/user`)"
+      - "traefik.http.services.user.loadbalancer.server.port=8082"
+ 
+  device:
+    build:
+      context: ./device
+      dockerfile: Dockerfile
+    ports:
+      - "8081:8081"
+    networks:
+      - app-network
+    environment:
+      - SPRING_PROFILES_ACTIVE=prod
+      - USER_SERVICE_URL=http://user:8080
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.device.rule=Host(`device.localhost`) || PathPrefix(`/device`)"
+      - "traefik.http.services.device.loadbalancer.server.port=8081"
+
+  monitoring-communication:
+    build:
+      context: ./monitoring-communication
+      dockerfile: Dockerfile
+    ports:
+      - "8085:8085"
+    networks:
+      - app-network
+    environment:
+      - SPRING_PROFILES_ACTIVE=prod
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.monitoring-communicationr.rule=Host(`monitoring-communication.localhost`) || PathPrefix(`/monitoring-communication`)"
+      - "traefik.http.services.smartmeteringdeviceconsumer.loadbalancer.server.port=8085"
+
+  chat:
+    build:
+      context: ./chat
+      dockerfile: Dockerfile
+    ports:
+      - "8084"
+    networks:
+      - app-network
+    environment:
+      - SPRING_PROFILES_ACTIVE=prod
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.chat.rule=Host(`chat.localhost`) || PathPrefix(`/chat`)"
+      - "traefik.http.services.chat.loadbalancer.server.port=8084"
+ 
+  postgres_users:
+    image: postgres:10.5
+    container_name: postgres_users
+    environment:
+      POSTGRES_DB: user-management
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: 
+    volumes:
+      - pgdata_user:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    networks:
+      - app-network
+ 
+  postgres_devices:
+    image: postgres:10.5
+    container_name: postgres_devices
+    environment:
+      POSTGRES_DB: device-management
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD:
+    volumes:
+      - pgdata_device:/var/lib/postgresql/data
+    ports:
+      - "5434:5432"
+    networks:
+      - app-network
+
+  postgres_monitoring:
+    image: postgres:10.5
+    container_name: postgres_monitoring
+    environment:
+      POSTGRES_DB: monitoring-management
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD:
+    volumes:
+      - pgdata_monitoring-communication:/var/lib/postgresql/data
+    ports:
+      - "5435:5432"
+    networks:
+      - app-network
+
+  # RabbitMQ Message Broker
+  rabbitmq:
+    container_name: rabbitmq
+    image: rabbitmq:4.0.3-management
+    ports:
+      - "15673:15672"
+      - "5672:5672"
+    networks:
+      - app-network
+    environment:
+      - RABBITMQ_DEFAULT_USER=guest
+      - RABBITMQ_DEFAULT_PASS=guest
+
+volumes:
+  pgdata_user: {}
+  pgdata_device: {}
+  pgdata_monitoring-communication: {}
+  traefik_logs: {}
+
+networks:
+  app-network:
+    driver: bridge
